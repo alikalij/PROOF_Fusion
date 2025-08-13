@@ -46,7 +46,7 @@ def main():
         ("tqdm", "tqdm"),
         ("matplotlib", "matplotlib"),
         ("numpy", "numpy"),
-        ("open_clip_torch", "open_clip_torch"),
+        ("open_clip", "open-clip"),
         ("timm", "timm")
     ]
     

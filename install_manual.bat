@@ -18,9 +18,9 @@ pip install tqdm matplotlib numpy
 
 echo.
 echo ========================================
-echo Installing open_clip_torch...
+echo Installing open-clip...
 echo ========================================
-pip install open_clip_torch
+pip install open-clip
 
 echo.
 echo ========================================

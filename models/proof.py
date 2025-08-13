@@ -40,6 +40,12 @@ class Learner(BaseLearner):
         self.task_prototypes = {}  # Store prototypes for each task
         self.unified_prototypes = None  # Store the fused prototypes
         self.unified_model = None  # Store the fused model
+        # Safe DataLoader workers (Colab/CPU friendly)
+        try:
+            device_type = getattr(self._device, "type", "cpu")
+        except Exception:
+            device_type = "cpu"
+        self.loader_workers = get_attribute(args, "num_workers", 0 if device_type == "cpu" else 2)
 
     def after_task(self):
         self._known_classes = self._total_classes
@@ -79,27 +85,62 @@ class Learner(BaseLearner):
         self._network.extend_task()
         
         logging.info("Learning on {}-{}".format(self._known_classes, self._total_classes))
-        train_dataset = data_manager.get_dataset(np.arange(self._known_classes, self._total_classes),
-            source="train", mode="train", appendent=self._get_memory())
+        logging.info("[Fusion] Preparing train dataset...")
+        train_dataset = data_manager.get_dataset(
+            np.arange(self._known_classes, self._total_classes),
+            source="train",
+            mode="train",
+            appendent=self._get_memory(),
+        )
         self.train_dataset=train_dataset
         self.data_manager=data_manager
         self._network.to(self._device)
-       
-        self.train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True, num_workers=num_workers)
-        test_dataset = data_manager.get_dataset(np.arange(0, self._total_classes), source="test", mode="test" )
-        self.test_loader = DataLoader(test_dataset, batch_size=self.batch_size, shuffle=False, num_workers=num_workers)
+        
+        # Configure DataLoaders with safe workers and pin_memory
+        pin_mem = getattr(self._device, "type", "cpu") == "cuda"
+        logging.info(f"[Fusion] Creating DataLoaders (workers={self.loader_workers}, pin_memory={pin_mem})...")
+        self.train_loader = DataLoader(
+            train_dataset,
+            batch_size=self.batch_size,
+            shuffle=True,
+            num_workers=self.loader_workers,
+            pin_memory=pin_mem,
+        )
+        test_dataset = data_manager.get_dataset(
+            np.arange(0, self._total_classes), source="test", mode="test"
+        )
+        self.test_loader = DataLoader(
+            test_dataset,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=self.loader_workers,
+            pin_memory=pin_mem,
+        )
 
      #   train_dataset_for_protonet = data_manager.get_dataset(np.arange(self._known_classes, self._total_classes), source="train", mode="test", )
      #   self.train_loader_for_protonet = DataLoader(train_dataset_for_protonet, batch_size=self.batch_size, shuffle=True, num_workers=num_workers)
 
-        train_dataset_for_protonet=data_manager.get_dataset(np.arange(self._known_classes, self._total_classes),source="train", mode="test" )
-        self.train_loader_for_protonet = DataLoader(train_dataset_for_protonet, batch_size=self.batch_size, shuffle=True, num_workers=num_workers)
+        logging.info("[Fusion] Preparing prototype dataset and loader...")
+        train_dataset_for_protonet = data_manager.get_dataset(
+            np.arange(self._known_classes, self._total_classes),
+            source="train",
+            mode="test",
+        )
+        self.train_loader_for_protonet = DataLoader(
+            train_dataset_for_protonet,
+            batch_size=self.batch_size,
+            shuffle=True,
+            num_workers=self.loader_workers,
+            pin_memory=pin_mem,
+        )
 
         if len(self._multiple_gpus) > 1:
             print('Multiple GPUs')
             self._network = nn.DataParallel(self._network, self._multiple_gpus)
 
+        logging.info("[Fusion] Computing prototypes...")
         self.cal_prototype(self.train_loader_for_protonet, self._network)
+        logging.info("[Fusion] Starting projection training...")
         self._train_proj(self.train_loader, self.test_loader, self.train_loader_for_protonet)
         self.build_rehearsal_memory(data_manager, self.samples_per_class)
         if len(self._multiple_gpus) > 1:
@@ -108,6 +149,7 @@ class Learner(BaseLearner):
         import copy
         self.task_models.append(copy.deepcopy(self._network).cpu())
         # Model Fusion: Fuse models after each task
+        logging.info("[Fusion] Fusing models...")
         self.fuse_models()
     
     def _train_proj(self, train_loader, test_loader, train_loader_for_protonet):
