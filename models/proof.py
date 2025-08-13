@@ -51,28 +51,58 @@ class Learner(BaseLearner):
         self._known_classes = self._total_classes
         logging.info("Exemplar size: {}".format(self.exemplar_size))
     
-    def cal_prototype(self,trainloader, model):
-        model = model.eval()
-        embedding_list = []
-        label_list = []
+    def cal_prototype(self, trainloader, model):
+        model.eval()
+        # Limit samples per class to speed up on CPU/Colab
+        max_per_class = get_attribute(self.args, "prototype_max_per_class", 32)
+        class_list = list(range(self._known_classes, self._total_classes))
+        counts = {int(c): 0 for c in class_list}
+        sums = {}
+        feature_dim = model.feature_dim if hasattr(model, "feature_dim") else None
+        if feature_dim is not None:
+            for c in class_list:
+                sums[int(c)] = torch.zeros(feature_dim, dtype=torch.float32, device="cpu")
+
+        total_needed = len(class_list) * max_per_class
+        collected = 0
+        log_every = 20
         with torch.no_grad():
             for i, batch in enumerate(trainloader):
-                (_,data,label)=batch
-                data=data.to(self._device)
-                label=label.to(self._device)
-                embedding=model.convnet.encode_image(data, True)
-                embedding_list.append(embedding.cpu())
-                label_list.append(label.cpu())
-        embedding_list = torch.cat(embedding_list, dim=0)
-        label_list = torch.cat(label_list, dim=0)
+                _, data, label = batch
+                data = data.to(self._device)
+                label = label.to(self._device)
+                embedding = model.convnet.encode_image(data, True)  # [bs, dim]
+                embedding = embedding.detach().cpu()
+                label = label.detach().cpu()
 
-        class_list=list(range(self._known_classes, self._total_classes))
+                for emb, lab in zip(embedding, label):
+                    lab_i = int(lab.item())
+                    if lab_i in counts and counts[lab_i] < max_per_class:
+                        if lab_i not in sums:
+                            # lazy init if feature_dim unknown
+                            sums[lab_i] = emb.clone()
+                        else:
+                            sums[lab_i] += emb
+                        counts[lab_i] += 1
+                        collected += 1
+                if i % log_every == 0:
+                    done_classes = sum(1 for c in class_list if counts[c] >= max_per_class)
+                    logging.info(f"[Fusion] Prototype sampling progress: batches={i}, collected={collected}/{total_needed}, classes_done={done_classes}/{len(class_list)}")
+                # Early stop when enough samples collected for all classes
+                if all(counts[c] >= max_per_class for c in class_list):
+                    break
+
+        # Compute mean prototype per class from sums/counts; fallback to previous if none collected
         for class_index in class_list:
-            data_index=(label_list==class_index).nonzero().squeeze(-1)
-            embedding=embedding_list[data_index]
-            proto=embedding.mean(0)
-            self._network.img_prototypes[class_index]=proto
-        # Model Fusion: Save prototypes for this task
+            if counts[class_index] > 0:
+                proto = (sums[class_index] / counts[class_index]).to(self._device)
+                self._network.img_prototypes[class_index] = proto
+            else:
+                # keep existing prototype (initialized as zeros) or leave unchanged
+                pass
+
+        logging.info("[Fusion] Prototypes computed for task {} (max_per_class={})".format(self._cur_task, max_per_class))
+        # Save prototypes for this task
         self.task_prototypes[self._cur_task] = self._network.img_prototypes.clone().detach().cpu()
 
     def incremental_train(self, data_manager):
