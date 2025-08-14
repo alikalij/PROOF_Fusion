@@ -356,7 +356,7 @@ class Learner(BaseLearner):
         # Optionally, create a unified model (here, just update img_prototypes)
         if self.unified_model is None:
             import copy
-            self.unified_model = copy.deepcopy(self._network).cpu()
+            self.unified_model = copy.deepcopy(self._network).to(self._device)
         self.unified_model.img_prototypes = self.unified_prototypes.clone().to(self._device)
         # Log
         logging.info(f"[Model Fusion] Unified prototypes shape: {self.unified_prototypes.shape}")
