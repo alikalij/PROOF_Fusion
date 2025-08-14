@@ -185,6 +185,15 @@ class Learner(BaseLearner):
     def _train_proj(self, train_loader, test_loader, train_loader_for_protonet):
         self._train_transformer=True
         self._network.to(self._device)
+        
+        # Save checkpoint before training
+        checkpoint_path = f"checkpoint_task_{self._cur_task}_before_training.pth"
+        torch.save({
+            'task': self._cur_task,
+            'model_state_dict': self._network.state_dict(),
+            'prototypes': self._network.img_prototypes,
+        }, checkpoint_path)
+        logging.info(f"[Fusion] Checkpoint saved to {checkpoint_path}")
        
         for name, param in self._network.convnet.named_parameters():
             if 'logit_scale' not in name:
@@ -208,7 +217,10 @@ class Learner(BaseLearner):
             self._network.train()
             losses = 0.0
             correct, total = 0, 0
+            logging.info(f"[Fusion] Starting epoch {epoch + 1}/{self.tuned_epoch}")
             for i, (_, inputs, targets) in enumerate(train_loader):
+                if i % 10 == 0:  # Log every 10 batches
+                    logging.info(f"[Fusion] Epoch {epoch + 1}, Batch {i}/{len(train_loader)}")
                 labels = [class_to_label[y] for y in targets]
                 inputs = inputs.to(self._device)
                 targets = targets.to(self._device)
@@ -246,10 +258,13 @@ class Learner(BaseLearner):
 
             scheduler.step()
             train_acc = np.around(tensor2numpy(correct) * 100 / total, decimals=2)
+            logging.info(f"[Fusion] Epoch {epoch + 1} completed - Train Acc: {train_acc:.2f}%")
+            logging.info("[Fusion] Computing test accuracy...")
             test_acc = self._compute_accuracy(self._network, test_loader)
             info = "Task {}, Epoch {}/{} => Loss {:.3f}, Train_acc {:.2f}, Test_acc {:.2f}".format(
                 self._cur_task,epoch + 1,self.args['tuned_epoch'],losses / len(train_loader),train_acc, test_acc,  )
             prog_bar.set_description(info)
+            logging.info(f"[Fusion] Epoch {epoch + 1} summary: {info}")
 
 
     def _compute_accuracy(self, model, loader):

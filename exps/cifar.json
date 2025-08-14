@@ -1,8 +1,8 @@
 {
     "prefix": "-",
     "dataset": "cifar224",
-    "memory_size": 500,
-    "memory_per_class": 10,
+    "memory_size": 200,
+    "memory_per_class": 5,
     "fixed_memory": false,
     "shuffle": true,
     "init_cls": 20,
@@ -13,10 +13,12 @@
     "seed": [ 1993],
     "projection_type": "pure_mlp",
     "frozen_layers": "visual",
-    "tuned_epoch": 2,
+    "tuned_epoch": 1,
     "init_lr": 0.002,
-    "batch_size": 32,
+    "batch_size": 8,
     "weight_decay": 0.05,
     "min_lr": 0,
-    "optimizer": "sgd"
+    "optimizer": "sgd",
+    "num_workers": 0,
+    "prototype_max_per_class": 8
 }
