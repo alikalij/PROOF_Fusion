@@ -294,6 +294,7 @@ class Learner(BaseLearner):
                 outputs = transf_image_features @ transf_text_features.T
                 proto_outputs= transf_image_features @ proto_feas.T
                 original_outputs= image_features @ text_features.T
+                logging.info(f"[Fusion][shapes] image_features: {image_features.shape}, text_features: {text_features.shape}, transf_image_features: {transf_image_features}, transf_text_features: {transf_text_features.shape}, proto_feas: {None if proto_feas is None else proto_feas.shape}")
                 outputs = original_outputs+outputs+proto_outputs
             predicts = torch.max(outputs, dim=1)[1]
             correct += (predicts.cpu() == targets).sum()
