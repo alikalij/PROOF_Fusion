@@ -101,9 +101,10 @@ class Learner(BaseLearner):
                 # keep existing prototype (initialized as zeros) or leave unchanged
                 pass
 
-        logging.info("[Fusion] Prototypes computed for task {} (max_per_class={})".format(self._cur_task, max_per_class))
-        # Save prototypes for this task
-        self.task_prototypes[self._cur_task] = self._network.img_prototypes.clone().detach().cpu()
+            logging.info(f"[Fusion] Prototypes computed for task {self._cur_task} with shape: {self._network.img_prototypes.shape}")
+            self._network.img_prototypes = self._network.img_prototypes.to(self._device)
+            # Save prototypes for this task        
+            self.task_prototypes[self._cur_task] = self._network.img_prototypes.clone().detach().cpu()
 
     def incremental_train(self, data_manager):
         self._cur_task += 1
@@ -292,10 +293,21 @@ class Learner(BaseLearner):
                 image_features=eval_model.encode_image(inputs)
                 transf_image_features, transf_text_features, _, proto_feas = eval_model.forward_transformer(image_features, text_features,self._train_transformer)
                 outputs = transf_image_features @ transf_text_features.T
-                proto_outputs= transf_image_features @ proto_feas.T
+                # proto_outputs= transf_image_features @ proto_feas.T
+                # تطبیق ابعاد پروتوتایپ‌ها
+                if proto_feas.size(0) < self._total_classes:
+                    # ساخت پروتوتایپ کامل با صفر برای کلاس‌های جدید
+                    full_proto = torch.zeros(
+                        (self._total_classes, proto_feas.size(1)), 
+                        device=proto_feas.device
+                    )
+                    full_proto[:proto_feas.size(0)] = proto_feas
+                    proto_outputs = transf_image_features @ full_proto.T
+                else:
+                    proto_outputs = transf_image_features @ proto_feas.T
                 original_outputs= image_features @ text_features.T
-                logging.info(f"[Fusion][shapes] image_features: {image_features.shape}, text_features: {text_features.shape}, transf_image_features: {transf_image_features.shape}, transf_text_features: {transf_text_features.shape}, proto_feas: {None if proto_feas is None else proto_feas.shape}")
-                outputs = original_outputs+outputs+proto_outputs
+                logging.info(f"[Fusion][shapes] image_features: {image_features.shape}, text_features: {text_features.shape}, transf_image_features: {transf_image_features.shape}, transf_text_features: {transf_text_features.shape}, proto_feas: {None if proto_feas is None else proto_feas.shape}, self._total_classes: {self._total_classes}, proto_outputs: {proto_outputs.shape}")
+                outputs = original_outputs+outputs+proto_outputs[:, :self._total_classes]
             predicts = torch.max(outputs, dim=1)[1]
             correct += (predicts.cpu() == targets).sum()
             total += len(targets)
@@ -327,39 +339,58 @@ class Learner(BaseLearner):
                 image_features=eval_model.encode_image(inputs)
                 transf_image_features, transf_text_features, _, proto_feas = eval_model.forward_transformer(image_features, text_features,self._train_transformer)
                 outputs = transf_image_features @ transf_text_features.T
-                proto_outputs= transf_image_features @ proto_feas.T
+                # proto_outputs= transf_image_features @ proto_feas.T
+                # تطبیق ابعاد پروتوتایپ‌ها
+                if proto_feas.size(0) < self._total_classes:
+                    # ساخت پروتوتایپ کامل با صفر برای کلاس‌های جدید
+                    full_proto = torch.zeros(
+                        (self._total_classes, proto_feas.size(1)), 
+                        device=proto_feas.device
+                    )
+                    full_proto[:proto_feas.size(0)] = proto_feas
+                    proto_outputs = transf_image_features @ full_proto.T
+                else:
+                    proto_outputs = transf_image_features @ proto_feas.T
                 original_outputs= image_features @ text_features.T
-                outputs = original_outputs+outputs+proto_outputs
+                outputs = original_outputs+outputs+proto_outputs[:, :self._total_classes]
             predicts = torch.topk(outputs, k=self.topk, dim=1, largest=True, sorted=True)[1]  # [bs, topk]
             y_pred.append(predicts.cpu().numpy())
             y_true.append(targets.cpu().numpy())
         return np.concatenate(y_pred), np.concatenate(y_true)  # [N, topk]
 
     def fuse_models(self):
-        """
-        Fuse all task prototypes into a unified prototype set (mean of all prototypes for each class).
-        Optionally, can also fuse projection layers or context prompts if needed.
-        """
         if not self.task_prototypes:
             return
-        # Find the max number of classes across all tasks
+        
+        # یافتن حداکثر کلاس‌ها در تمام تسک‌ها
         max_classes = max([p.shape[0] for p in self.task_prototypes.values()])
-        # Stack all prototypes (pad if needed)
-        proto_list = []
+        feature_dim = self.task_prototypes[list(self.task_prototypes.keys())[0]].shape[1]
+        
+        # ایجاد تنسور یکپارچه با ابعاد صحیح
+        unified_proto = torch.zeros(max_classes, feature_dim)
+        counts = torch.zeros(max_classes)
+        
         for t, proto in self.task_prototypes.items():
-            if proto.shape[0] < max_classes:
-                pad = torch.zeros(max_classes - proto.shape[0], proto.shape[1])
-                proto = torch.cat([proto, pad], dim=0)
-            proto_list.append(proto)
-        # Average prototypes across tasks
-        unified_proto = torch.stack(proto_list, dim=0).mean(dim=0)
+            current_classes = proto.shape[0]
+            # فقط کلاس‌های معتبر را اضافه کنید
+            valid_classes = min(current_classes, max_classes)
+            unified_proto[:valid_classes] += proto[:valid_classes]
+            counts[:valid_classes] += 1
+        
+        # محاسبه میانگین
+        counts[counts == 0] = 1  # جلوگیری از تقسیم بر صفر
+        unified_proto /= counts.unsqueeze(1)
+        
         self.unified_prototypes = unified_proto
-        # Optionally, create a unified model (here, just update img_prototypes)
+        
         if self.unified_model is None:
             import copy
-            self.unified_model = copy.deepcopy(self._network).to(self._device)
-        self.unified_model.img_prototypes = self.unified_prototypes.clone().to(self._device)
-        # Log
+            self.unified_model = copy.deepcopy(self._network)
+        
+        # به‌روزرسانی پروتوتایپ‌ها با ابعاد صحیح
+        self.unified_model.img_prototypes = nn.Parameter(
+            torch.zeros(max_classes, feature_dim, device=self._device)
+        )
+        self.unified_model.img_prototypes.data[:max_classes] = unified_proto.to(self._device)
+        
         logging.info(f"[Model Fusion] Unified prototypes shape: {self.unified_prototypes.shape}")
-
-
