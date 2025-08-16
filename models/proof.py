@@ -87,7 +87,7 @@ class Learner(BaseLearner):
                         collected += 1
                 if i % log_every == 0:
                     done_classes = sum(1 for c in class_list if counts[c] >= max_per_class)
-                    logging.info(f"[Fusion] Prototype sampling progress: batches={i}, collected={collected}/{total_needed}, classes_done={done_classes}/{len(class_list)}")
+                    # logging.info(f"[Fusion] Prototype sampling progress: batches={i}, collected={collected}/{total_needed}, classes_done={done_classes}/{len(class_list)}")
                 # Early stop when enough samples collected for all classes
                 if all(counts[c] >= max_per_class for c in class_list):
                     break
@@ -101,7 +101,7 @@ class Learner(BaseLearner):
                 # keep existing prototype (initialized as zeros) or leave unchanged
                 pass
 
-            logging.info(f"[Fusion] Prototypes computed for task {self._cur_task} with shape: {self._network.img_prototypes.shape}")
+            # logging.info(f"[Fusion] Prototypes computed for task {self._cur_task} with shape: {self._network.img_prototypes.shape}")
             self._network.img_prototypes = self._network.img_prototypes.to(self._device)
             # Save prototypes for this task        
             self.task_prototypes[self._cur_task] = self._network.img_prototypes.clone().detach().cpu()
@@ -116,7 +116,7 @@ class Learner(BaseLearner):
         self._network.extend_task()
         
         logging.info("Learning on {}-{}".format(self._known_classes, self._total_classes))
-        logging.info("[Fusion] Preparing train dataset...")
+        # logging.info("[Fusion] Preparing train dataset...")
         train_dataset = data_manager.get_dataset(
             np.arange(self._known_classes, self._total_classes),
             source="train",
@@ -129,7 +129,7 @@ class Learner(BaseLearner):
         
         # Configure DataLoaders with safe workers and pin_memory
         pin_mem = getattr(self._device, "type", "cpu") == "cuda"
-        logging.info(f"[Fusion] Creating DataLoaders (workers={self.loader_workers}, pin_memory={pin_mem})...")
+        # logging.info(f"[Fusion] Creating DataLoaders (workers={self.loader_workers}, pin_memory={pin_mem})...")
         self.train_loader = DataLoader(
             train_dataset,
             batch_size=self.batch_size,
@@ -151,7 +151,7 @@ class Learner(BaseLearner):
      #   train_dataset_for_protonet = data_manager.get_dataset(np.arange(self._known_classes, self._total_classes), source="train", mode="test", )
      #   self.train_loader_for_protonet = DataLoader(train_dataset_for_protonet, batch_size=self.batch_size, shuffle=True, num_workers=num_workers)
 
-        logging.info("[Fusion] Preparing prototype dataset and loader...")
+        # logging.info("[Fusion] Preparing prototype dataset and loader...")
         train_dataset_for_protonet = data_manager.get_dataset(
             np.arange(self._known_classes, self._total_classes),
             source="train",
@@ -169,9 +169,9 @@ class Learner(BaseLearner):
             print('Multiple GPUs')
             self._network = nn.DataParallel(self._network, self._multiple_gpus)
 
-        logging.info("[Fusion] Computing prototypes...")
+        # logging.info("[Fusion] Computing prototypes...")
         self.cal_prototype(self.train_loader_for_protonet, self._network)
-        logging.info("[Fusion] Starting projection training...")
+        # logging.info("[Fusion] Starting projection training...")
         self._train_proj(self.train_loader, self.test_loader, self.train_loader_for_protonet)
         self.build_rehearsal_memory(data_manager, self.samples_per_class)
         if len(self._multiple_gpus) > 1:
@@ -180,7 +180,7 @@ class Learner(BaseLearner):
         import copy
         self.task_models.append(copy.deepcopy(self._network).cpu())
         # Model Fusion: Fuse models after each task
-        logging.info("[Fusion] Fusing models...")
+        # logging.info("[Fusion] Fusing models...")
         self.fuse_models()
     
     def _train_proj(self, train_loader, test_loader, train_loader_for_protonet):
@@ -194,7 +194,7 @@ class Learner(BaseLearner):
             'model_state_dict': self._network.state_dict(),
             'prototypes': self._network.img_prototypes,
         }, checkpoint_path)
-        logging.info(f"[Fusion] Checkpoint saved to {checkpoint_path}")
+        # logging.info(f"[Fusion] Checkpoint saved to {checkpoint_path}")
        
         for name, param in self._network.convnet.named_parameters():
             if 'logit_scale' not in name:
@@ -218,10 +218,10 @@ class Learner(BaseLearner):
             self._network.train()
             losses = 0.0
             correct, total = 0, 0
-            logging.info(f"[Fusion] Starting epoch {epoch + 1}/{self.tuned_epoch}")
+            # logging.info(f"[Fusion] Starting epoch {epoch + 1}/{self.tuned_epoch}")
             for i, (_, inputs, targets) in enumerate(train_loader):
-                if i % 10 == 0:  # Log every 10 batches
-                    logging.info(f"[Fusion] Epoch {epoch + 1}, Batch {i}/{len(train_loader)}")
+                # if i % 10 == 0:  # Log every 10 batches
+                    # logging.info(f"[Fusion] Epoch {epoch + 1}, Batch {i}/{len(train_loader)}")
                 labels = [class_to_label[y] for y in targets]
                 inputs = inputs.to(self._device)
                 targets = targets.to(self._device)
@@ -259,13 +259,13 @@ class Learner(BaseLearner):
 
             scheduler.step()
             train_acc = np.around(tensor2numpy(correct) * 100 / total, decimals=2)
-            logging.info(f"[Fusion] Epoch {epoch + 1} completed - Train Acc: {train_acc:.2f}%")
-            logging.info("[Fusion] Computing test accuracy...")
+            # logging.info(f"[Fusion] Epoch {epoch + 1} completed - Train Acc: {train_acc:.2f}%")
+            # logging.info("[Fusion] Computing test accuracy...")
             test_acc = self._compute_accuracy(self._network, test_loader)
             info = "Task {}, Epoch {}/{} => Loss {:.3f}, Train_acc {:.2f}, Test_acc {:.2f}".format(
                 self._cur_task,epoch + 1,self.args['tuned_epoch'],losses / len(train_loader),train_acc, test_acc,  )
             prog_bar.set_description(info)
-            logging.info(f"[Fusion] Epoch {epoch + 1} summary: {info}")
+            # logging.info(f"[Fusion] Epoch {epoch + 1} summary: {info}")
 
 
     def _compute_accuracy(self, model, loader):
@@ -306,7 +306,7 @@ class Learner(BaseLearner):
                 else:
                     proto_outputs = transf_image_features @ proto_feas.T
                 original_outputs= image_features @ text_features.T
-                logging.info(f"[Fusion][shapes] image_features: {image_features.shape}, text_features: {text_features.shape}, transf_image_features: {transf_image_features.shape}, transf_text_features: {transf_text_features.shape}, proto_feas: {None if proto_feas is None else proto_feas.shape}, self._total_classes: {self._total_classes}, proto_outputs: {proto_outputs.shape}")
+                # logging.info(f"[Fusion][shapes] image_features: {image_features.shape}, text_features: {text_features.shape}, transf_image_features: {transf_image_features.shape}, transf_text_features: {transf_text_features.shape}, proto_feas: {None if proto_feas is None else proto_feas.shape}, self._total_classes: {self._total_classes}, proto_outputs: {proto_outputs.shape}")
                 outputs = original_outputs+outputs+proto_outputs[:, :self._total_classes]
             predicts = torch.max(outputs, dim=1)[1]
             correct += (predicts.cpu() == targets).sum()
@@ -393,4 +393,4 @@ class Learner(BaseLearner):
         )
         self.unified_model.img_prototypes.data[:max_classes] = unified_proto.to(self._device)
         
-        logging.info(f"[Model Fusion] Unified prototypes shape: {self.unified_prototypes.shape}")
+        # logging.info(f"[Model Fusion] Unified prototypes shape: {self.unified_prototypes.shape}")
